@@ -1,0 +1,241 @@
+/*
+PURPOSE:
+This script initializes and manages the Bronze layer of the data warehouse by recreating staging tables and loading raw data from CRM and ERP source systems. It 
+first drops existing tables (if they exist) and recreates them to ensure a consistent structure. A stored procedure (_bronze.load_bronze) is then used to perform 
+a full batch load, where each table is truncated and reloaded using BULK INSERT from CSV files. The procedure also includes execution logging to track load times 
+for each table and basic error handling using TRY...CATCH, making the data ingestion process repeatable and easier to monitor. Overall, it establishes a 
+structured pipeline for bringing raw source data into the Bronze layer before further transformation into downstream layers.
+
+WARNING:
+This script performs a full refresh of all Bronze tables, meaning that existing data is permanently deleted each time the procedure runs due to the use of 
+TRUNCATE TABLE. It relies on hardcoded local file paths for data ingestion, which must be updated when deploying to different environments or servers. 
+Additionally, SQL Server requires appropriate file system permissions to access these files, otherwise the load will fail. The process does not support 
+incremental loading and may not scale efficiently for large production datasets without modification. It also assumes that the _bronze schema already exists 
+and includes minimal data validation, so issues such as incorrect formats, missing values, or duplicate records are not handled during the load.
+*/
+
+if object_id ('_bronze.crm_cust_info', 'U') is not null
+drop table _bronze.crm_cust_info;
+
+create table _bronze.crm_cust_info(
+
+cst_id int,
+cst_key nvarchar(50),
+cst_firstname nvarchar(50),
+cst_lastname nvarchar(50),
+cst_marital_status nvarchar(50),
+cst_gndr nvarchar(50),
+cst_create_date date
+
+);
+
+if object_id ('_bronze.crm_prd_info', 'U') is not null
+drop table _bronze.crm_prd_info;
+
+create table _bronze.crm_prd_info(
+
+prd_id int,
+prd_key nvarchar(50),
+prd_nm nvarchar(50),
+prd_cost int,
+prd_line nvarchar(50),
+prd_start_dt datetime,
+prd_end_dt datetime
+
+);
+
+if object_id ('_bronze.crm_sales_details', 'U') is not null
+drop table _bronze.crm_sales_details;
+
+create table _bronze.crm_sales_details(
+
+sls_ord_num nvarchar(50),
+sls_prd_key nvarchar(50),
+sls_cust_id int,
+sls_order_dt int,
+sls_ship_dt int,
+sls_due_dt int,
+sls_sales int,
+sls_quantity int,
+sls_price int
+
+);
+
+if object_id ('_bronze.erp_cust', 'U') is not null
+drop table _bronze.erp_cust;
+
+create table _bronze.erp_cust(
+
+cid nvarchar(50),
+bdate date,
+gen nvarchar(50)
+
+);
+
+if object_id ('_bronze.erp_loc', 'U') is not null
+drop table _bronze.erp_loc;
+
+create table _bronze.erp_loc(
+
+cid nvarchar(50),
+cntry nvarchar(50)
+
+);
+
+if object_id ('_bronze.erp_px_cat', 'U') is not null
+drop table _bronze.erp_px_cat;
+
+create table _bronze.erp_px_cat(
+
+id nvarchar(50),
+cat nvarchar(50),
+subcat nvarchar(50),
+maintenance nvarchar(50)
+
+);
+
+create or alter procedure _bronze.load_bronze as
+
+	begin
+
+		declare @start_time datetime, @end_time datetime, @start_time_batch datetime, @end_time_batch datetime
+
+		set @start_time_batch=getdate()
+
+		begin try
+
+			print '===========================';
+			print 'Loading Bronze Layer...';
+			print '===========================';
+
+			print '---------------------------';
+			print 'Loading CRM Tables...';
+			print '---------------------------';
+
+			set @start_time=getdate()
+
+			print 'Truncating table: _bronze.crm_cust_info';
+			truncate table _bronze.crm_cust_info;
+			print 'Bulk inserting into table: _bronze.crm_cust_info'
+			bulk insert _bronze.crm_cust_info
+			from 'C:\Users\ZARYAB\Desktop\sql-data-warehouse-project-main\sql-data-warehouse-project-main\datasets\source_crm\cust_info.csv'
+			with (
+				firstrow=2,
+				fieldterminator=',',
+				tablock
+			)
+
+			set @end_time=getdate()
+			
+
+			print 'Loading time: ' +cast(datediff(second, @start_time, @end_time) as nvarchar)+ 'seconds'
+
+			set @start_time=getdate()
+
+			print 'Truncating table: _bronze.crm_prd_info';
+			truncate table _bronze.crm_prd_info;
+			print 'Bulk inserting into table: _bronze.crm_prd_info'
+			bulk insert _bronze.crm_prd_info
+			from 'C:\Users\ZARYAB\Desktop\sql-data-warehouse-project-main\sql-data-warehouse-project-main\datasets\source_crm\prd_info.csv'
+			with (
+				firstrow=2,
+				fieldterminator=',',
+				tablock
+			)
+
+			set @end_time=getdate()
+			
+			print 'Loading time: ' +cast(datediff(second, @start_time, @end_time) as nvarchar)+ 'seconds'
+
+			set @start_time=getdate()
+
+			print 'Truncating table: _bronze.crm_sales_details';
+			truncate table _bronze.crm_sales_details;
+			print 'Bulk inserting into table: _bronze.crm_sales_details'
+			bulk insert _bronze.crm_sales_details
+			from 'C:\Users\ZARYAB\Desktop\sql-data-warehouse-project-main\sql-data-warehouse-project-main\datasets\source_crm\sales_details.csv'
+			with (
+				firstrow=2,
+				fieldterminator=',',
+				tablock
+			)
+
+			set @end_time=getdate()
+			
+			print 'Loading time: ' +cast(datediff(second, @start_time, @end_time) as nvarchar)+ 'seconds'
+
+			set @start_time=getdate()
+
+			print '---------------------------';
+			print 'Loading ERP Tables...';
+			print '---------------------------';
+
+			print 'Truncating table: _bronze.erp_cust';
+			truncate table _bronze.erp_cust;
+			print 'Bulk inserting into table: _bronze.erp_cust'
+			bulk insert _bronze.erp_cust
+			from 'C:\Users\ZARYAB\Desktop\sql-data-warehouse-project-main\sql-data-warehouse-project-main\datasets\source_erp\CUST_AZ12.csv'
+			with (
+				firstrow=2,
+				fieldterminator=',',
+				tablock
+			)
+
+			set @end_time=getdate()
+
+			print 'Loading time: ' +cast(datediff(second, @start_time, @end_time) as nvarchar)+ 'seconds'
+
+			set @start_time=getdate()
+
+			print 'Truncating table: _bronze.erp_loc';
+			truncate table _bronze.erp_loc;
+			print 'Bulk inserting into table: _bronze.erp_loc'
+			bulk insert _bronze.erp_loc
+			from 'C:\Users\ZARYAB\Desktop\sql-data-warehouse-project-main\sql-data-warehouse-project-main\datasets\source_erp\LOC_A101.csv'
+			with (
+				firstrow=2,
+				fieldterminator=',',
+				tablock
+			)
+
+			set @end_time=getdate()
+
+			print 'Loading time: ' +cast(datediff(second, @start_time, @end_time) as nvarchar)+ 'seconds'
+
+			set @start_time=getdate()
+
+			print 'Truncating table: _bronze.erp_px_cat';
+			truncate table _bronze.erp_px_cat;
+			print 'Bulk inserting into table: _bronze.erp_px_cat'
+			bulk insert _bronze.erp_px_cat
+			from 'C:\Users\ZARYAB\Desktop\sql-data-warehouse-project-main\sql-data-warehouse-project-main\datasets\source_erp\PX_CAT_G1V2.csv'
+			with (
+				firstrow=2,
+				fieldterminator=',',
+				tablock
+			)
+
+			set @end_time=getdate()
+
+			print 'Loading time: ' +cast(datediff(second, @start_time, @end_time) as nvarchar)+ 'seconds'
+
+		end try
+
+		begin catch
+
+		print '============================='
+		print 'Error Occurred'
+		print 'Error Message: ' + error_message()
+		print 'Error Number: ' + cast(error_number() as nvarchar)
+		print 'Error State: ' + cast(error_state() as nvarchar)
+		print '============================='
+		
+		end catch
+
+		set @end_time_batch=getdate()
+
+		print 'Batch Load Time: ' + cast(datediff(second, @start_time_batch, @end_time_batch) as nvarchar) +'seconds'
+
+	end
+
+exec _bronze.load_bronze
