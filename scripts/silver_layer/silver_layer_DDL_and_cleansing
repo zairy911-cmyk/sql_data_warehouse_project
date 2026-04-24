@@ -1,275 +1,367 @@
 PURPOSE:
-This script is designed to create and populate the _silver layer of a data warehouse by transforming raw data from the _bronze layer into a clean, structured, 
-and analysis-ready format. It begins by dropping existing silver tables (if they exist) and recreating them with well-defined schemas to ensure consistency. 
-The script performs multiple data cleansing operations, including trimming whitespace, standardizing categorical values such as gender and marital status, and 
-handling null or invalid entries. It also applies deduplication logic using window functions to retain only the most recent customer records. In addition, it 
-derives new attributes such as product categories and end dates, validates and converts date fields into proper formats, and enforces data quality rules by 
-recalculating inconsistent sales values where necessary. Audit columns are included to track data load timestamps, making the data more reliable and suitable 
-for downstream analytics in the gold layer.
+This script is responsible for setting up and loading the Silver Layer in the data warehouse architecture. It first ensures that all required _silver tables 
+exist by dropping and recreating them with the appropriate schema. These tables act as a cleansed and standardized layer between raw (_bronze) data and 
+downstream analytics (_gold).
+The stored procedure _silver.load_silver performs the transformation and loading process by truncating existing Silver tables and inserting refreshed data 
+from the Bronze layer. During this process, it applies data cleaning and standardization techniques such as trimming text fields, normalizing categorical 
+values, handling null or invalid records, deriving calculated fields, and enforcing basic data quality rules. It also logs execution timing for each load 
+step to support monitoring and performance tracking.
 
 WARNING:
-This script performs destructive operations by dropping and recreating tables in the _silver layer, which means all existing data in those tables will be 
-permanently deleted each time it is executed. It is designed for full batch processing rather than incremental updates, making it unsuitable for direct use 
-in production environments without proper safeguards. The script assumes that the underlying _bronze layer tables are already populated and structurally 
-consistent; any discrepancies in the source data may lead to execution failures. Additionally, some transformations may result in data loss or alteration, 
-such as converting invalid dates to null values, recalculating sales figures, or removing duplicate records while keeping only the most recent entries. The 
-use of window functions and full table operations may also impact performance on large datasets. Therefore, it is strongly recommended to run this script in 
-a controlled environment with proper backups, validation checks, and testing before deploying it in any production workflow.
-
---_silver.crm_cust_info CREATION AND INSERTION
+This script contains destructive operations and should be used with caution. The initial table setup includes DROP TABLE statements, which will permanently 
+delete existing tables and all associated data. This may also break dependencies such as views, foreign keys, or downstream processes relying on these tables.
+The stored procedure uses TRUNCATE TABLE, which will remove all existing records from the Silver layer before reloading data. This means historical data is not 
+preserved unless handled elsewhere.
+Additionally, the script assumes that the _bronze layer is clean, available, and structurally consistent. Any issues in the Bronze layer (such as invalid data 
+types or unexpected formats) may cause the load process to fail.
+This script is intended for development, testing, or controlled ETL environments. It is not recommended for direct use in production without proper safeguards 
+such as transaction handling, dependency checks, and backup strategies.
 
 if object_id ('_silver.crm_cust_info', 'U') is not null
-drop table _silver.crm_cust_info;
+	drop table _silver.crm_cust_info;
 
-create table _silver.crm_cust_info(
+	create table _silver.crm_cust_info(
 
-cst_id int,
-cst_key varchar(50),
-cst_firstname varchar(50),
-cst_lastname varchar(50),
-cst_marital_status varchar(50),
-cst_gndr varchar(50),
-cst_create_date date,
-dwh_create_dt datetime2 default getdate()
+	cst_id int,
+	cst_key varchar(50),
+	cst_firstname varchar(50),
+	cst_lastname varchar(50),
+	cst_marital_status varchar(50),
+	cst_gndr varchar(50),
+	cst_create_date date,
+	dwh_create_dt datetime2 default getdate()
 
-);
+	);
 
-insert into _silver.crm_cust_info (
-	cst_id,
-	cst_key,
-	cst_firstname,
-	cst_lastname,
-	cst_marital_status,
-	cst_gndr,
-	cst_create_date
-)
+	if object_id ('_silver.crm_prd_info', 'U') is not null
+	drop table _silver.crm_prd_info;
 
-select
-	cst_id, 
-	cst_key, 
-	trim(cst_firstname) as cst_firstname, 
-	trim(cst_lastname) as cst_lastname,
-	case
-		when upper(trim(cst_marital_status))='M' then 'Married'
-		when upper(trim(cst_marital_status))='S' then 'Single'
-		else 'N/A'
-	end as cst_marital_status,
-	case
-		when upper(trim(cst_gndr))='M' then 'Male'
-		when upper(trim(cst_gndr))='F' then 'Female'
-		else 'N/A'
-	end as cst_gndr,
-	cst_create_date
-from(
-select
-	*,
-	row_number() over(partition by cst_id order by cst_create_date desc) as _flag
-from _bronze.crm_cust_info
-) as t
-where _flag=1 and cst_id is not null
+	create table _silver.crm_prd_info(
 
---_silver.crm_prd_info CREATION AND INSERTION
+	prd_id int,
+	prd_key varchar(50),
+	prd_cat varchar(50),
+	prd_key_short varchar(50),
+	prd_nm varchar(50),
+	prd_cost int,
+	prd_line varchar(50),
+	prd_start_dt date,
+	prd_end_dt date,
+	dwh_create_dt datetime2 default getdate()
 
-if object_id ('_silver.crm_prd_info', 'U') is not null
-drop table _silver.crm_prd_info;
+	);
 
-create table _silver.crm_prd_info(
+	if object_id ('_silver.crm_sales_details', 'U') is not null
+	drop table _silver.crm_sales_details;
 
-prd_id int,
-prd_key varchar(50),
-prd_cat varchar(50),
-prd_key_short varchar(50),
-prd_nm varchar(50),
-prd_cost int,
-prd_line varchar(50),
-prd_start_dt date,
-prd_end_dt date,
-dwh_create_dt datetime2 default getdate()
+	create table _silver.crm_sales_details(
 
-);
+		sls_ord_num varchar(50),
+		sls_prd_key varchar(50),
+		sls_cust_id int,
+		sls_order_dt date,
+		sls_ship_dt date,
+		sls_due_dt date,
+		sls_sales int,
+		sls_quantity int,
+		sls_price int,
+		dwh_create_date datetime default getdate()
 
-insert into _silver.crm_prd_info(
+	);
 
-	prd_id,
-	prd_key,
-	prd_cat,
-	prd_key_short,
-	prd_nm,
-	prd_cost,
-	prd_line,
-	prd_start_dt,
-	prd_end_dt
+	if object_id ('_silver.erp_cust', 'U') is not null
+	drop table _silver.erp_cust;
 
-)
+	create table _silver.erp_cust(
 
-select
-	prd_id,
-	prd_key,
-	replace(substring(prd_key, 1, 5), '-', '_') as prd_cat,
-	substring(prd_key, 7, len(prd_key)) as prd_key_short,
-	prd_nm,
-	isnull(prd_cost, 0) as prd_cost,
-	case
-		when upper(trim(prd_line))='M' then 'Mountain'
-		when upper(trim(prd_line))='R' then 'Road'
-		when upper(trim(prd_line))='S' then 'Other Sales'
-		when upper(trim(prd_line))='T' then 'Touring'
-		else 'N/A'
-	end as prd_line,
-	cast (prd_start_dt as date) as prd_start_dt,
-	cast(lead(prd_start_dt) over(partition by prd_key order by prd_start_dt)-1 as date) as prd_end_dt
-from _bronze.crm_prd_info
+	cid varchar(50),
+	bdate date,
+	gen varchar(50),
+	dwh_create_dt datetime2 default getdate()
 
---_silver.crm_sales_details CREATION AND INSERTION
+	);
 
-if object_id ('_silver.crm_sales_details', 'U') is not null
-drop table _silver.crm_sales_details;
+	if object_id ('_silver.erp_loc', 'U') is not null
+	drop table _silver.erp_loc;
 
-create table _silver.crm_sales_details(
+	create table _silver.erp_loc(
 
-	sls_ord_num varchar(50),
-	sls_prd_key varchar(50),
-	sls_cust_id int,
-	sls_order_dt date,
-	sls_ship_dt date,
-	sls_due_dt date,
-	sls_sales int,
-	sls_quantity int,
-	sls_price int,
-	dwh_create_date datetime default getdate()
+	cid varchar(50),
+	cntry varchar(50),
+	dwh_create_dt datetime2 default getdate()
 
-);
+	);
 
-insert into _silver.crm_sales_details (
+	if object_id ('_silver.erp_px_cat', 'U') is not null
+	drop table _silver.erp_px_cat;
 
-sls_ord_num,
-sls_prd_key,
-sls_cust_id,
-sls_order_dt,
-sls_ship_dt,
-sls_due_dt,
-sls_sales, 
-sls_quantity,
-sls_price
+	create table _silver.erp_px_cat(
 
-)
+	id varchar(50),
+	cat varchar(50),
+	subcat varchar(50),
+	maintenance varchar(50),
+	dwh_create_dt datetime2 default getdate()
 
-select
-	sls_ord_num, 
+	);
+
+create or alter procedure _silver.load_silver as
+
+begin
+
+	begin try
+	
+	declare @start_time datetime, @end_time datetime, @start_time_batch datetime, @end_time_batch datetime
+
+	set @start_time_batch=getdate()
+
+	print '=======================================================';
+	print 'Truncating Tables and Inserting Data into Silver Layer...';
+	print '=======================================================';
+
+	--_silver.crm_cust_info TRUNCATE AND INSERT
+
+	set @start_time=getdate()
+
+	truncate table _silver.crm_cust_info
+
+	print 'Truncating and inserting into _silver.crm_cust_info'
+
+	insert into _silver.crm_cust_info (
+		cst_id,
+		cst_key,
+		cst_firstname,
+		cst_lastname,
+		cst_marital_status,
+		cst_gndr,
+		cst_create_date
+	)
+
+	select
+		cst_id, 
+		cst_key, 
+		trim(cst_firstname) as cst_firstname, 
+		trim(cst_lastname) as cst_lastname,
+		case
+			when upper(trim(cst_marital_status))='M' then 'Married'
+			when upper(trim(cst_marital_status))='S' then 'Single'
+			else 'N/A'
+		end as cst_marital_status,
+		case
+			when upper(trim(cst_gndr))='M' then 'Male'
+			when upper(trim(cst_gndr))='F' then 'Female'
+			else 'N/A'
+		end as cst_gndr,
+		cst_create_date
+	from(
+	select
+		*,
+		row_number() over(partition by cst_id order by cst_create_date desc) as _flag
+	from _bronze.crm_cust_info
+	) as t
+	where _flag=1 and cst_id is not null
+
+	set @end_time=getdate()
+			
+	print 'Loading time: ' +cast(datediff(second, @start_time, @end_time) as nvarchar)+ 'seconds'
+
+	set @start_time=getdate()
+
+	--_silver.crm_prd_info TRUNCATE AND INSERT
+
+	truncate table _silver.crm_prd_info
+
+	print 'Truncating and inserting into _silver.crm_prd_info'
+
+	insert into _silver.crm_prd_info(
+
+		prd_id,
+		prd_key,
+		prd_cat,
+		prd_key_short,
+		prd_nm,
+		prd_cost,
+		prd_line,
+		prd_start_dt,
+		prd_end_dt
+
+	)
+
+	select
+		prd_id,
+		prd_key,
+		replace(substring(prd_key, 1, 5), '-', '_') as prd_cat,
+		substring(prd_key, 7, len(prd_key)) as prd_key_short,
+		prd_nm,
+		isnull(prd_cost, 0) as prd_cost,
+		case
+			when upper(trim(prd_line))='M' then 'Mountain'
+			when upper(trim(prd_line))='R' then 'Road'
+			when upper(trim(prd_line))='S' then 'Other Sales'
+			when upper(trim(prd_line))='T' then 'Touring'
+			else 'N/A'
+		end as prd_line,
+		cast (prd_start_dt as date) as prd_start_dt,
+		cast(lead(prd_start_dt) over(partition by prd_key order by prd_start_dt)-1 as date) as prd_end_dt
+	from _bronze.crm_prd_info
+
+	set @end_time=getdate()
+			
+	print 'Loading time: ' +cast(datediff(second, @start_time, @end_time) as nvarchar)+ 'seconds'
+
+	set @start_time=getdate()
+
+	--_silver.crm_sales_details TRUNCATE AND INSERT
+
+	truncate table _silver.crm_sales_details
+
+	print 'Truncating and inserting into _silver.crm_sales_details'
+
+	insert into _silver.crm_sales_details (
+
+	sls_ord_num,
 	sls_prd_key,
 	sls_cust_id,
-	case
-		when sls_order_dt<=0 or len(sls_order_dt)!=8 then null
-		else cast(cast(sls_order_dt as varchar) as date)
-	end as sls_order_dt,
-	case
-		when sls_ship_dt<=0 or len(sls_ship_dt)!=8 then null
-		else cast(cast(sls_ship_dt as varchar) as date)
-	end as sls_ship_dt,
-	case
-		when sls_due_dt<=0 or len(sls_due_dt)!=8 then null
-		else cast(cast(sls_due_dt as varchar) as date)
-	end as sls_due_dt,
-	case
-		when sls_sales<0 or sls_sales is null or sls_sales != sls_quantity*abs(sls_price) then sls_quantity*abs(sls_price)
-		else sls_sales
-	end as sls_sales,
+	sls_order_dt,
+	sls_ship_dt,
+	sls_due_dt,
+	sls_sales, 
 	sls_quantity,
-	case
-		when sls_price is null or sls_price<=0 then sls_sales/nullif(sls_quantity, 0)
-		else sls_price
-	end as sls_price
-from _bronze.crm_sales_details
+	sls_price
 
---_silver.erp_cust CREATION AND INSERTION
+	)
 
-if object_id ('_silver.erp_cust', 'U') is not null
-drop table _silver.erp_cust;
+	select
+		sls_ord_num, 
+		sls_prd_key,
+		sls_cust_id,
+		case
+			when sls_order_dt<=0 or len(sls_order_dt)!=8 then null
+			else cast(cast(sls_order_dt as varchar) as date)
+		end as sls_order_dt,
+		case
+			when sls_ship_dt<=0 or len(sls_ship_dt)!=8 then null
+			else cast(cast(sls_ship_dt as varchar) as date)
+		end as sls_ship_dt,
+		case
+			when sls_due_dt<=0 or len(sls_due_dt)!=8 then null
+			else cast(cast(sls_due_dt as varchar) as date)
+		end as sls_due_dt,
+		case
+			when sls_sales<0 or sls_sales is null or sls_sales != sls_quantity*abs(sls_price) then sls_quantity*abs(sls_price)
+			else sls_sales
+		end as sls_sales,
+		sls_quantity,
+		case
+			when sls_price is null or sls_price<=0 then sls_sales/nullif(sls_quantity, 0)
+			else sls_price
+		end as sls_price
+	from _bronze.crm_sales_details
 
-create table _silver.erp_cust(
+	set @end_time=getdate()
+			
+	print 'Loading time: ' +cast(datediff(second, @start_time, @end_time) as nvarchar)+ 'seconds'
 
-cid varchar(50),
-bdate date,
-gen varchar(50),
-dwh_create_dt datetime2 default getdate()
+	set @start_time=getdate()
 
-);
+	--_silver.erp_cust TRUNCATE AND INSERT
 
-insert into _silver.erp_cust (
-	cid,
-	bdate,
-	gen
-)
+	print 'Truncating and inserting into _silver.erp_cust'
 
-select
-    case
-        when cid like 'NAS%' then substring(cid, 4, len(cid))
-        else cid
-    end as cid,
-    case
-        when bdate>getdate() then null
-        else bdate
-    end as bdate,
-    case
-        when upper(trim(gen)) in ('F', 'Female') then 'Female'
-        when upper(trim(gen)) in ('M', 'Male') then 'Male'
-        else 'N/A'
-    end as gen
-from _bronze.erp_cust
+	truncate table _silver.erp_cust
 
---_silver.erp_loc CREATION AND INSERTION
+	insert into _silver.erp_cust (
+		cid,
+		bdate,
+		gen
+	)
 
-if object_id ('_silver.erp_loc', 'U') is not null
-drop table _silver.erp_loc;
+	select
+		case
+			when cid like 'NAS%' then substring(cid, 4, len(cid))
+			else cid
+		end as cid,
+		case
+			when bdate>getdate() then null
+			else bdate
+		end as bdate,
+		case
+			when upper(trim(gen)) in ('F', 'Female') then 'Female'
+			when upper(trim(gen)) in ('M', 'Male') then 'Male'
+			else 'N/A'
+		end as gen
+	from _bronze.erp_cust
 
-create table _silver.erp_loc(
+	set @end_time=getdate()
+			
+	print 'Loading time: ' +cast(datediff(second, @start_time, @end_time) as nvarchar)+ 'seconds'
 
-cid varchar(50),
-cntry varchar(50),
-dwh_create_dt datetime2 default getdate()
+	set @start_time=getdate()
 
-);
+	--_silver.erp_loc TRUNCATE AND INSERT
 
-insert into _silver.erp_loc (
-	cid,
-	cntry
-)
+	print 'Truncating and inserting into _silver.erp_loc'
 
-select
-	replace(cid, '-', '') as cid,
-	case
-		when upper(trim(cntry)) in ('DE', 'Germany') then 'Germany'
-		when upper(trim(cntry)) in ('USA', 'US', 'United States') then 'United States'
-		when upper(trim(cntry)) is null or cntry='' then 'N/A'
-		else trim(cntry)
-	end as cntry
-from [_bronze].[erp_loc]
+	truncate table _silver.erp_loc
 
---_silver.erp_px_cat CREATION AND INSERTION
+	insert into _silver.erp_loc (
+		cid,
+		cntry
+	)
 
-if object_id ('_silver.erp_px_cat', 'U') is not null
-drop table _silver.erp_px_cat;
+	select
+		replace(cid, '-', '') as cid,
+		case
+			when upper(trim(cntry)) in ('DE', 'Germany') then 'Germany'
+			when upper(trim(cntry)) in ('USA', 'US', 'United States') then 'United States'
+			when upper(trim(cntry)) is null or cntry='' then 'N/A'
+			else trim(cntry)
+		end as cntry
+	from [_bronze].[erp_loc]
 
-create table _silver.erp_px_cat(
+	set @end_time=getdate()
+			
+	print 'Loading time: ' +cast(datediff(second, @start_time, @end_time) as nvarchar)+ 'seconds'
 
-id varchar(50),
-cat varchar(50),
-subcat varchar(50),
-maintenance varchar(50),
-dwh_create_dt datetime2 default getdate()
+	set @start_time=getdate()
 
-);
+	--_silver.erp_px_cat TRUNCATE AND INSERT
 
-insert into _silver.erp_px_cat (
-	id,
-	cat,
-	subcat,
-	maintenance
-)
+	print 'Truncating and inserting into _silver.erp_px_cat'
 
-select
-	id,
-	cat,
-	subcat,
-	maintenance
-from _bronze.erp_px_cat
+	truncate table _silver.erp_px_cat
+
+	insert into _silver.erp_px_cat (
+		id,
+		cat,
+		subcat,
+		maintenance
+	)
+
+	select
+		id,
+		cat,
+		subcat,
+		maintenance
+	from _bronze.erp_px_cat
+
+	set @end_time=getdate()
+			
+	print 'Loading time: ' +cast(datediff(second, @start_time, @end_time) as nvarchar)+ 'seconds'
+
+	end try
+
+	begin catch
+	print '============================='
+	print 'Error Occurred'
+	print 'Error Message: ' + error_message()
+	print 'Error Number: ' + cast(error_number() as nvarchar)
+	print 'Error State: ' + cast(error_state() as nvarchar)
+	print '============================='
+	end catch
+
+	set @end_time_batch=getdate()
+
+	print 'Batch Load Time: ' + cast(datediff(second, @start_time_batch, @end_time_batch) as nvarchar) +'seconds'
+
+end
