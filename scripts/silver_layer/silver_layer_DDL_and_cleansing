@@ -217,4 +217,30 @@ select
     end as gen
 from _bronze.erp_cust
 
+--_silver.erp_loc CREATION AND INSERTION
 
+if object_id ('_silver.erp_loc', 'U') is not null
+drop table _silver.erp_loc;
+
+create table _silver.erp_loc(
+
+cid varchar(50),
+cntry varchar(50),
+dwh_create_dt datetime2 default getdate()
+
+);
+
+insert into _silver.erp_loc (
+	cid,
+	cntry
+)
+
+select
+	replace(cid, '-', '') as cid,
+	case
+		when upper(trim(cntry)) in ('DE', 'Germany') then 'Germany'
+		when upper(trim(cntry)) in ('USA', 'US', 'United States') then 'United States'
+		when upper(trim(cntry)) is null or cntry='' then 'N/A'
+		else trim(cntry)
+	end as cntry
+from [_bronze].[erp_loc]
