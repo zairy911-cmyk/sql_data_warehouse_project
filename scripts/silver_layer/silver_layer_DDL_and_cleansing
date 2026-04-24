@@ -244,3 +244,32 @@ select
 		else trim(cntry)
 	end as cntry
 from [_bronze].[erp_loc]
+
+--_silver.erp_px_cat CREATION AND INSERTION
+
+if object_id ('_silver.erp_px_cat', 'U') is not null
+drop table _silver.erp_px_cat;
+
+create table _silver.erp_px_cat(
+
+id varchar(50),
+cat varchar(50),
+subcat varchar(50),
+maintenance varchar(50),
+dwh_create_dt datetime2 default getdate()
+
+);
+
+insert into _silver.erp_px_cat (
+	id,
+	cat,
+	subcat,
+	maintenance
+)
+
+select
+	id,
+	cat,
+	subcat,
+	maintenance
+from _bronze.erp_px_cat
