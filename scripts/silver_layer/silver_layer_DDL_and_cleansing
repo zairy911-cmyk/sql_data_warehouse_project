@@ -1,0 +1,183 @@
+PURPOSE:
+This script is designed to create and populate the _silver layer of a data warehouse by transforming raw data from the _bronze layer into a clean, structured, 
+and analysis-ready format. It begins by dropping existing silver tables (if they exist) and recreating them with well-defined schemas to ensure consistency. 
+The script performs multiple data cleansing operations, including trimming whitespace, standardizing categorical values such as gender and marital status, and 
+handling null or invalid entries. It also applies deduplication logic using window functions to retain only the most recent customer records. In addition, it 
+derives new attributes such as product categories and end dates, validates and converts date fields into proper formats, and enforces data quality rules by 
+recalculating inconsistent sales values where necessary. Audit columns are included to track data load timestamps, making the data more reliable and suitable 
+for downstream analytics in the gold layer.
+
+WARNING:
+This script performs destructive operations by dropping and recreating tables in the _silver layer, which means all existing data in those tables will be 
+permanently deleted each time it is executed. It is designed for full batch processing rather than incremental updates, making it unsuitable for direct use 
+in production environments without proper safeguards. The script assumes that the underlying _bronze layer tables are already populated and structurally 
+consistent; any discrepancies in the source data may lead to execution failures. Additionally, some transformations may result in data loss or alteration, 
+such as converting invalid dates to null values, recalculating sales figures, or removing duplicate records while keeping only the most recent entries. The 
+use of window functions and full table operations may also impact performance on large datasets. Therefore, it is strongly recommended to run this script in 
+a controlled environment with proper backups, validation checks, and testing before deploying it in any production workflow.
+
+--_silver.crm_cust_info CREATION AND INSERTION
+
+if object_id ('_silver.crm_cust_info', 'U') is not null
+drop table _silver.crm_cust_info;
+
+create table _silver.crm_cust_info(
+
+cst_id int,
+cst_key varchar(50),
+cst_firstname varchar(50),
+cst_lastname varchar(50),
+cst_marital_status varchar(50),
+cst_gndr varchar(50),
+cst_create_date date,
+dwh_create_dt datetime2 default getdate()
+
+);
+
+insert into _silver.crm_cust_info (
+	cst_id,
+	cst_key,
+	cst_firstname,
+	cst_lastname,
+	cst_marital_status,
+	cst_gndr,
+	cst_create_date
+)
+
+select
+	cst_id, 
+	cst_key, 
+	trim(cst_firstname) as cst_firstname, 
+	trim(cst_lastname) as cst_lastname,
+	case
+		when upper(trim(cst_marital_status))='M' then 'Married'
+		when upper(trim(cst_marital_status))='S' then 'Single'
+		else 'N/A'
+	end as cst_marital_status,
+	case
+		when upper(trim(cst_gndr))='M' then 'Male'
+		when upper(trim(cst_gndr))='F' then 'Female'
+		else 'N/A'
+	end as cst_gndr,
+	cst_create_date
+from(
+select
+	*,
+	row_number() over(partition by cst_id order by cst_create_date desc) as _flag
+from _bronze.crm_cust_info
+) as t
+where _flag=1 and cst_id is not null
+
+--_silver.crm_prd_info CREATION AND INSERTION
+
+if object_id ('_silver.crm_prd_info', 'U') is not null
+drop table _silver.crm_prd_info;
+
+create table _silver.crm_prd_info(
+
+prd_id int,
+prd_key varchar(50),
+prd_cat varchar(50),
+prd_key_short varchar(50),
+prd_nm varchar(50),
+prd_cost int,
+prd_line varchar(50),
+prd_start_dt date,
+prd_end_dt date,
+dwh_create_dt datetime2 default getdate()
+
+);
+
+insert into _silver.crm_prd_info(
+
+	prd_id,
+	prd_key,
+	prd_cat,
+	prd_key_short,
+	prd_nm,
+	prd_cost,
+	prd_line,
+	prd_start_dt,
+	prd_end_dt
+
+)
+
+select
+	prd_id,
+	prd_key,
+	replace(substring(prd_key, 1, 5), '-', '_') as prd_cat,
+	substring(prd_key, 7, len(prd_key)) as prd_key_short,
+	prd_nm,
+	isnull(prd_cost, 0) as prd_cost,
+	case
+		when upper(trim(prd_line))='M' then 'Mountain'
+		when upper(trim(prd_line))='R' then 'Road'
+		when upper(trim(prd_line))='S' then 'Other Sales'
+		when upper(trim(prd_line))='T' then 'Touring'
+		else 'N/A'
+	end as prd_line,
+	cast (prd_start_dt as date) as prd_start_dt,
+	cast(lead(prd_start_dt) over(partition by prd_key order by prd_start_dt)-1 as date) as prd_end_dt
+from _bronze.crm_prd_info
+
+--_silver.crm_sales_details CREATION AND INSERTION
+
+if object_id ('_silver.crm_sales_details', 'U') is not null
+drop table _silver.crm_sales_details;
+
+create table _silver.crm_sales_details(
+
+	sls_ord_num varchar(50),
+	sls_prd_key varchar(50),
+	sls_cust_id int,
+	sls_order_dt date,
+	sls_ship_dt date,
+	sls_due_dt date,
+	sls_sales int,
+	sls_quantity int,
+	sls_price int,
+	dwh_create_date datetime default getdate()
+
+);
+
+insert into _silver.crm_sales_details (
+
+sls_ord_num,
+sls_prd_key,
+sls_cust_id,
+sls_order_dt,
+sls_ship_dt,
+sls_due_dt,
+sls_sales, 
+sls_quantity,
+sls_price
+
+)
+
+select
+	sls_ord_num, 
+	sls_prd_key,
+	sls_cust_id,
+	case
+		when sls_order_dt<=0 or len(sls_order_dt)!=8 then null
+		else cast(cast(sls_order_dt as varchar) as date)
+	end as sls_order_dt,
+	case
+		when sls_ship_dt<=0 or len(sls_ship_dt)!=8 then null
+		else cast(cast(sls_ship_dt as varchar) as date)
+	end as sls_ship_dt,
+	case
+		when sls_due_dt<=0 or len(sls_due_dt)!=8 then null
+		else cast(cast(sls_due_dt as varchar) as date)
+	end as sls_due_dt,
+	case
+		when sls_sales<0 or sls_sales is null or sls_sales != sls_quantity*abs(sls_price) then sls_quantity*abs(sls_price)
+		else sls_sales
+	end as sls_sales,
+	sls_quantity,
+	case
+		when sls_price is null or sls_price<=0 then sls_sales/nullif(sls_quantity, 0)
+		else sls_price
+	end as sls_price
+from _bronze.crm_sales_details
+
