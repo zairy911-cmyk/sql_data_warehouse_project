@@ -181,3 +181,40 @@ select
 	end as sls_price
 from _bronze.crm_sales_details
 
+--_silver.erp_cust CREATION AND INSERTION
+
+if object_id ('_silver.erp_cust', 'U') is not null
+drop table _silver.erp_cust;
+
+create table _silver.erp_cust(
+
+cid varchar(50),
+bdate date,
+gen varchar(50),
+dwh_create_dt datetime2 default getdate()
+
+);
+
+insert into _silver.erp_cust (
+	cid,
+	bdate,
+	gen
+)
+
+select
+    case
+        when cid like 'NAS%' then substring(cid, 4, len(cid))
+        else cid
+    end as cid,
+    case
+        when bdate>getdate() then null
+        else bdate
+    end as bdate,
+    case
+        when upper(trim(gen)) in ('F', 'Female') then 'Female'
+        when upper(trim(gen)) in ('M', 'Male') then 'Male'
+        else 'N/A'
+    end as gen
+from _bronze.erp_cust
+
+
