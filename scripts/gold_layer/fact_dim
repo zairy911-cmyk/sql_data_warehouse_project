@@ -21,7 +21,7 @@ on ci.cst_key=cl.cid
 
 create view _gold.dim_products as
 select
-	row_number() over(order by pi.prd_start_dt, pi.prd_key) as [key],
+	row_number() over(order by pi.prd_start_dt, pi.prd_key) as [p_key],
 	pi.prd_id as product_id,
 	pi.prd_key as product_key,
 	pi.prd_key_short as product_key_short,
