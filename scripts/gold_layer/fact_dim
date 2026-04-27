@@ -18,3 +18,23 @@ left join _silver.erp_cust as ce
 on ci.cst_key=ce.cid
 left join _silver.erp_loc as cl
 on ci.cst_key=cl.cid
+
+create view _gold.dim_products as
+select
+	row_number() over(order by pi.prd_start_dt, pi.prd_key) as [key],
+	pi.prd_id as product_id,
+	pi.prd_key as product_key,
+	pi.prd_key_short as product_key_short,
+	pi.prd_nm as product_name,
+	pi.prd_cat as product_category_short,
+	px.cat as product_category,
+	px.subcat as product_subcategory,
+	pi.prd_line as product_line,
+	pi.prd_cost as product_cost,
+	px.maintenance as product_maintenance,
+	pi.prd_start_dt as product_start_date,
+	pi.prd_end_dt as product_end_date	
+from [_silver].[crm_prd_info] as [pi]
+left join [_silver].[erp_px_cat] as [px]
+on pi.prd_cat=px.id
+where pi.prd_end_dt is null
