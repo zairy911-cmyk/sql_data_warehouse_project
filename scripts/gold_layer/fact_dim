@@ -38,3 +38,20 @@ from [_silver].[crm_prd_info] as [pi]
 left join [_silver].[erp_px_cat] as [px]
 on pi.prd_cat=px.id
 where pi.prd_end_dt is null
+
+create view _gold.fact_sales as	
+select
+	ft.sls_ord_num as order_number, 
+	pr.p_key as product_key,
+	cu.customer_key as customer_key,
+	ft.sls_order_dt as order_date,
+	ft.sls_ship_dt as shipping_date,
+	ft.sls_due_dt as due_date,
+	ft.sls_sales as sales,
+	ft.sls_quantity as quantity,
+	ft.sls_price as price
+from _silver.crm_sales_details as ft
+inner join _gold.dim_products as pr
+on ft.sls_prd_key=pr.product_key_short
+inner join _gold.dim_customers as cu
+on ft.sls_cust_id=cu.customer_id
