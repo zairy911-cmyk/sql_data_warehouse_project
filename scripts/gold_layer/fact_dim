@@ -1,4 +1,6 @@
+create view _gold.dim_customers as
 select
+	row_number() over(order by ci.cst_id) as customer_key,
 	ci.cst_id as customer_id,
 	ci.cst_key as customer_reference,
 	ci.cst_firstname as first_name,
